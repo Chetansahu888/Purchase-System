@@ -17,6 +17,7 @@ import RactifyMistake2 from "./components/Ractify-mistake2";
 import TakeEntryTallyPage from "./components/Take-entryby-tally";
 import AgainAuditingPage from "./components/Again-for-auditing";
 import OriginalBillsFiledPage from "./components/Originals-billto-fill";
+import TolrancePage from "./components/Tolrance";
 
 import { useAuth } from "./context/AuthContext";
 import BiltyPage from "./components/BiltyPage";
@@ -31,7 +32,7 @@ import {
   LayoutDashboard, FilePlus, PackageCheck, FileText, Calculator,
   Truck, CheckSquare, TestTube, Archive, Menu, X, Receipt, PackageSearch,
   UserCheck, Wallet, Landmark, User, Database, 
-  FileEdit, Search, FileCheck, RotateCcw, Save, Edit2
+  FileEdit, Search, FileCheck, RotateCcw, Save, Edit2, Gauge,Loader2, Scale
 } from 'lucide-react';
 import { Toaster } from "@/components/ui/sonner";
 
@@ -70,7 +71,8 @@ function App() {
     { id: "take-entry-tally", label: "Tally Entry", icon: <Calculator size={20} />, stepName: "accounts" },
     { id: "again-auditing", label: "Re-Audit", icon: <RotateCcw size={20} />, stepName: "accounts" },
     { id: "original-bills", label: "Bills Filing", icon: <Archive size={20} />, stepName: "accounts" },
-    
+      { id: "tolrance", label: "Tolrance", icon: < Scale size={20} />, stepName: "tolrance" },
+
     // { id: "kyc", label: "KYC", icon: <UserCheck size={20} />, stepName: "KYC" },
     // { id: "vendor-payment", label: "Vendor Payment", icon: <Landmark size={20} />, stepName: "Vendor Payment" }
   ];
@@ -164,7 +166,7 @@ function App() {
       case "take-entry-tally": return <TakeEntryTallyPage />;
       case "again-auditing": return <AgainAuditingPage />;
       case "original-bills": return <OriginalBillsFiledPage />;
-      
+      case "tolrance": return <TolrancePage />;
       case "kyc": return <KycPage />;
       case "vendor-payment": return <VendorPaymentPage />;
       default: return <Dashboard />;

@@ -54,6 +54,7 @@ const PHYSICAL_COND_COL_Z = 25;
 const MOISTURE_COL_AA = 26;
 const PHYSICAL_IMAGE_URL_COL_AB = 27;
 const WEIGHT_SLIP_URL_COL_AC = 28;
+const WEIGHT_SLIP_QTY_COL_BF = 57; // Column BF for Weight Slip Qty
 const FIRM_NAME_COL = 55; // Column BD for Firm Name
 
 // Column Definitions
@@ -89,6 +90,7 @@ const PROCESSED_RECEIPTS_COLUMNS_META = [
   { header: "Truck No.", dataKey: "truckNo", toggleable: true },
   { header: "Planned", dataKey: "plannedDate_formatted", toggleable: true },
   { header: "Actual Receipt Date", dataKey: "dateOfReceiving_formatted", toggleable: true },
+  { header: "Weight Slip Qty", dataKey: "weightSlipQty_fromSheet", toggleable: true },
   { header: "Physical Image", dataKey: "physicalImageUrl_fromSheet", toggleable: true, isLink: true, linkText: "View Image" },
   { header: "Weight Slip", dataKey: "weightSlipImageUrl_fromSheet", toggleable: true, isLink: true, linkText: "View Image" },
   { header: "Receipt Timestamp (Col U)", dataKey: "actual1Timestamp", toggleable: true },
@@ -151,6 +153,15 @@ const formatDateString = (dateValue) => {
   return dateValue;
 };
 
+// Helper function to check if quantities match (Total Bill Qty vs Actual Qty only)
+const checkQuantitiesMatch = (totalBillQty, actualQty) => {
+  const bill = parseFloat(totalBillQty) || 0;
+  const actual = parseFloat(actualQty) || 0;
+  
+  // Check if Total Bill Qty equals Actual Qty only
+  return bill === actual;
+};
+
 // ReceiptFormModal Component
 function ReceiptFormModal({ isOpen, onClose, liftData, children }) {
   if (!isOpen) {
@@ -199,6 +210,7 @@ export default function ReceiptCheck() {
     dateOfReceiving: new Date().toISOString().split("T")[0],
     totalBillQuantity: "",
     actualQuantity: "",
+    weightSlipQty: "", // New field
     qtyDifference: "0.00",
     physicalCondition: "Good",
     moisture: "",
@@ -283,7 +295,13 @@ export default function ReceiptCheck() {
             moisture_fromSheet: getStringValue(MOISTURE_COL_AA),
             physicalImageUrl_fromSheet: getStringValue(PHYSICAL_IMAGE_URL_COL_AB),
             weightSlipImageUrl_fromSheet: getStringValue(WEIGHT_SLIP_URL_COL_AC),
+            weightSlipQty_fromSheet: getStringValue(WEIGHT_SLIP_QTY_COL_BF), // New field
             firmName: getStringValue(FIRM_NAME_COL),
+            // Helper property to check if quantities match (Total Bill Qty vs Actual Qty only)
+            _quantitiesMatch: checkQuantitiesMatch(
+              getStringValue(TOTAL_BILL_QUANTITY_COL_X),
+              getStringValue(ACTUAL_QTY_COL_Y)
+            ),
           };
           return rowData;
         });
@@ -379,11 +397,13 @@ export default function ReceiptCheck() {
     setFormErrors({});
     const initialTotal = parseFloat(lift.totalBillQuantity_fromSheet || lift.qty) || 0;
     const initialActual = parseFloat(lift.actualQuantity_fromSheet || lift.qty) || 0;
+    const initialWeightSlip = parseFloat(lift.weightSlipQty_fromSheet || lift.qty) || 0;
     setFormData({
       liftId: lift.id,
       dateOfReceiving: lift.dateOfReceiving_fromSheet || new Date().toISOString().split("T")[0],
       totalBillQuantity: initialTotal.toString(),
       actualQuantity: initialActual.toString(),
+      weightSlipQty: initialWeightSlip.toString(), // New field
       qtyDifference: (initialTotal - initialActual).toFixed(2),
       physicalCondition: lift.physicalCondition_fromSheet || "Good",
       moisture: lift.moisture_fromSheet || "",
@@ -400,6 +420,7 @@ export default function ReceiptCheck() {
     if (!formData.dateOfReceiving) newErrors.dateOfReceiving = "Date of Receiving is required.";
     if (!formData.totalBillQuantity || isNaN(parseFloat(formData.totalBillQuantity))) newErrors.totalBillQuantity = "Total Bill Quantity must be a number.";
     if (!formData.actualQuantity || isNaN(parseFloat(formData.actualQuantity))) newErrors.actualQuantity = "Actual Quantity must be a number.";
+    if (!formData.weightSlipQty || isNaN(parseFloat(formData.weightSlipQty))) newErrors.weightSlipQty = "Weight Slip Qty must be a number.";
     if (!formData.physicalCondition) newErrors.physicalCondition = "Physical Condition is required.";
     if (!formData.moisture || isNaN(parseFloat(formData.moisture))) newErrors.moisture = "Moisture must be a number.";
     
@@ -463,6 +484,7 @@ export default function ReceiptCheck() {
         [`col${MOISTURE_COL_AA + 1}`]: parseFloat(formData.moisture) || 0,
         [`col${PHYSICAL_IMAGE_URL_COL_AB + 1}`]: physicalImageUrl,
         [`col${WEIGHT_SLIP_URL_COL_AC + 1}`]: weightSlipImageUrl,
+        [`col${WEIGHT_SLIP_QTY_COL_BF + 1}`]: parseFloat(formData.weightSlipQty) || 0, // New field
       };
   
       const payload = new URLSearchParams({
@@ -503,6 +525,7 @@ export default function ReceiptCheck() {
       dateOfReceiving: new Date().toISOString().split("T")[0],
       totalBillQuantity: "",
       actualQuantity: "",
+      weightSlipQty: "", // New field
       qtyDifference: "0.00",
       physicalCondition: "Good",
       moisture: "",
@@ -636,7 +659,14 @@ export default function ReceiptCheck() {
                 </TableHeader>
                 <TableBody>
                   {data.map((item) => (
-                    <TableRow key={item._id} className="hover:bg-purple-50/50">
+                    <TableRow 
+                      key={item._id} 
+                      className={`hover:bg-purple-50/50 ${
+                        tabKey === "processedReceipts" && !item._quantitiesMatch 
+                          ? "bg-red-100 hover:bg-red-200/70 border-l-4 border-l-red-500" 
+                          : ""
+                      }`}
+                    >
                       {visibleCols.map((column) => (
                         <TableCell key={`${item._id}-${column.dataKey}`} className={`whitespace-nowrap text-xs px-3 py-2 ${column.dataKey === "id" || column.dataKey === "liftNo" ? "font-medium text-primary" : "text-gray-700"}`}>
                           {column.dataKey === "actionColumn" && tabKey === "awaitingReceipt" ? (
@@ -767,7 +797,7 @@ export default function ReceiptCheck() {
               {renderTableSection("awaitingReceipt", "Material Lifts Awaiting Receipt", "Filtered by Column T (Planned) having a value and Column U (Actual Timestamp) being empty.", liftsAwaitingReceipt, AWAITING_RECEIPT_COLUMNS_META, visibleAwaitingReceiptColumns)}
             </TabsContent>
             <TabsContent value="processedReceipts" className="flex-1 flex flex-col mt-0">
-              {renderTableSection("processedReceipts", "Processed Lifts / Receipts", "Lifts with a Timestamp in Column U, sorted by latest.", derivedMaterialReceipts, PROCESSED_RECEIPTS_COLUMNS_META, visibleProcessedReceiptsColumns)}
+              {renderTableSection("processedReceipts", "Processed Lifts / Receipts", "Lifts with a Timestamp in Column U, sorted by latest. Red rows indicate quantity mismatches.", derivedMaterialReceipts, PROCESSED_RECEIPTS_COLUMNS_META, visibleProcessedReceiptsColumns)}
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -820,6 +850,22 @@ export default function ReceiptCheck() {
                 className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${formErrors.actualQuantity ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
               />
               {formErrors.actualQuantity && <p className="text-red-500 text-xs mt-1">{formErrors.actualQuantity}</p>}
+            </div>
+            <div>
+              <Label htmlFor="weightSlipQty" className="block text-sm font-medium text-gray-700">
+                Weight Slip Qty<span className="text-red-500">*</span>
+              </Label>
+              <Input
+                type="number"
+                step="any"
+                id="weightSlipQty"
+                name="weightSlipQty"
+                value={formData.weightSlipQty}
+                onChange={handleInputChange}
+                placeholder="e.g. 15.00"
+                className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${formErrors.weightSlipQty ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
+              />
+              {formErrors.weightSlipQty && <p className="text-red-500 text-xs mt-1">{formErrors.weightSlipQty}</p>}
             </div>
             <div>
               <Label htmlFor="qtyDifference" className="block text-sm font-medium text-gray-700">
@@ -900,6 +946,29 @@ export default function ReceiptCheck() {
               )}
             </div>
           </div>
+          
+          {/* Quantity Comparison Warning */}
+          {(formData.totalBillQuantity || formData.actualQuantity || formData.weightSlipQty) && (
+            <div className="mt-4 p-3 rounded-lg border-l-4 border-l-amber-400 bg-amber-50">
+              <div className="flex">
+                {/* <div className="flex-shrink-0">
+                  <AlertTriangle className="h-5 w-5 text-amber-400" />
+                </div> */}
+                {/* <div className="ml-3">
+                  <h3 className="text-sm font-medium text-amber-800">
+                    Quantity Comparison
+                  </h3>
+                  <div className="mt-2 text-sm text-amber-700">
+                    <p>Bill Qty: {formData.totalBillQuantity || "0"} | Actual Qty: {formData.actualQuantity || "0"} | Weight Slip Qty: {formData.weightSlipQty || "0"}</p>
+                    {!checkQuantitiesMatch(formData.totalBillQuantity, formData.actualQuantity, formData.weightSlipQty) && (
+                      <p className="mt-1 font-medium text-red-600">⚠️ Warning: Quantities do not match!</p>
+                    )}
+                  </div>
+                </div> */}
+              </div>
+            </div>
+          )}
+          
           <div className="pt-5 sm:pt-6 flex flex-col sm:flex-row-reverse gap-3 sm:gap-0 sm:justify-start">
             <Button
               type="submit"

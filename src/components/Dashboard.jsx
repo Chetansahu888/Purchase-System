@@ -17,6 +17,7 @@ import {
   Clock,
   CheckCircle2,
   Loader2,
+  AlertTriangle,
 } from "lucide-react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -42,12 +43,13 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts"
-import { useAuth } from "../context/AuthContext" // Import useAuth
+import { useAuth } from "../context/AuthContext"
 
 // --- Constants ---
 const SHEET_ID = "1NUxf4pnQ-CtCFUjA5rqLgYEJiU77wQlwVyimjt8RmFQ"
 const INDENT_PO_SHEET = "INDENT-PO"
 const LIFT_ACCOUNTS_SHEET = "LIFT-ACCOUNTS"
+const ACCOUNTS_SHEET = "ACCOUNTS"
 
 // Enhanced color palette for professional look
 const THEME_COLORS = {
@@ -204,9 +206,16 @@ export default function Dashboard() {
   const [error, setError] = useState(null)
   const [allPurchaseData, setAllPurchaseData] = useState([])
   const [allLiftAccountData, setAllLiftAccountData] = useState([])
+  const [allAccountsData, setAllAccountsData] = useState([])
+  // Add state for stage names from first row
+  const [stageNames, setStageNames] = useState({
+    indentPo: {},
+    liftAccounts: {},
+    accounts: {}
+  })
   const [activeTab, setActiveTab] = useState("overview")
   const [purchaseSubTab, setPurchaseSubTab] = useState("pending-lift")
-  const { user, allowedSteps } = useAuth() // Get user and allowedSteps from AuthContext
+  const { user, allowedSteps } = useAuth()
 
   // --- Filter States ---
   const [dateRange, setDateRange] = useState(undefined)
@@ -229,27 +238,35 @@ export default function Dashboard() {
       const liftAccountsUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(
         LIFT_ACCOUNTS_SHEET,
       )}`
+      const accountsUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(
+        ACCOUNTS_SHEET,
+      )}`
 
-      const [indentPoRes, liftAccountsRes] = await Promise.all([fetch(indentPoUrl), fetch(liftAccountsUrl)])
+      const [indentPoRes, liftAccountsRes, accountsRes] = await Promise.all([
+        fetch(indentPoUrl), 
+        fetch(liftAccountsUrl),
+        fetch(accountsUrl)
+      ])
 
-      // Add this right after the fetch calls, before parsing
       console.log("INDENT-PO Response Status:", indentPoRes.status)
       console.log("LIFT-ACCOUNTS Response Status:", liftAccountsRes.status)
+      console.log("ACCOUNTS Response Status:", accountsRes.status)
 
       if (!indentPoRes.ok) throw new Error(`Failed to fetch INDENT-PO sheet: ${indentPoRes.statusText}`)
       if (!liftAccountsRes.ok) throw new Error(`Failed to fetch LIFT-ACCOUNTS sheet: ${liftAccountsRes.statusText}`)
+      if (!accountsRes.ok) throw new Error(`Failed to fetch ACCOUNTS sheet: ${accountsRes.statusText}`)
 
       const indentPoText = await indentPoRes.text()
       const liftAccountsText = await liftAccountsRes.text()
+      const accountsText = await accountsRes.text()
 
-      // Add this after getting the text responses
       console.log("INDENT-PO Text Length:", indentPoText.length)
-      console.log("INDENT-PO Text Preview:", indentPoText.substring(0, 200))
       console.log("LIFT-ACCOUNTS Text Length:", liftAccountsText.length)
-      console.log("LIFT-ACCOUNTS Text Preview:", liftAccountsText.substring(0, 200))
+      console.log("ACCOUNTS Text Length:", accountsText.length)
 
       const indentPoData = parseGvizResponse(indentPoText)
       const liftAccountsData = parseGvizResponse(liftAccountsText)
+      const accountsData = parseGvizResponse(accountsText)
 
       if (!indentPoData || !indentPoData.table) {
         throw new Error(
@@ -263,10 +280,59 @@ export default function Dashboard() {
         )
       }
 
-      // Process INDENT-PO data
+      if (!accountsData || !accountsData.table) {
+        throw new Error(
+          "ACCOUNTS sheet has no table data or failed to parse. The sheet might be empty or have a different structure.",
+        )
+      }
+
+      // Extract stage names from first row (index 0) of each sheet
+      const extractedStageNames = {
+        indentPo: {},
+        liftAccounts: {},
+        accounts: {}
+      }
+
+      // Extract stage names from INDENT-PO sheet (columns M=12, S=18, AL=37, AO=40)
+      if (indentPoData.table.rows.length > 0 && indentPoData.table.rows[0].c) {
+        const firstRow = indentPoData.table.rows[0].c
+        extractedStageNames.indentPo = {
+          M: firstRow[12]?.v || 'Stage M',
+          S: firstRow[18]?.v || 'Stage S', 
+          AL: firstRow[37]?.v || 'Po Entry In Tally',
+          AO: firstRow[40]?.v || 'Get Lift The Item'
+        }
+      }
+
+      // Extract stage names from LIFT-ACCOUNTS sheet (columns U=20, AE=30, AJ=35, BB=53)
+      if (liftAccountsData.table.rows.length > 0 && liftAccountsData.table.rows[0].c) {
+        const firstRow = liftAccountsData.table.rows[0].c
+        extractedStageNames.liftAccounts = {
+          U: firstRow[20]?.v || 'Stage U',
+          AE: firstRow[30]?.v || 'Stage AE',
+          AJ: firstRow[35]?.v || 'Stage AJ', 
+          BB: firstRow[53]?.v || 'Stage BB'
+        }
+      }
+
+      // Extract stage names from ACCOUNTS sheet (columns AA=26, AF=31, AK=36, AP=41, AU=46)
+      if (accountsData.table.rows.length > 0 && accountsData.table.rows[0].c) {
+        const firstRow = accountsData.table.rows[0].c
+        extractedStageNames.accounts = {
+          AA: firstRow[26]?.v || 'Stage AA',
+          AF: firstRow[31]?.v || 'Stage AF',
+          AK: firstRow[36]?.v || 'Stage AK',
+          AP: firstRow[41]?.v || 'Stage AP',
+          AU: firstRow[46]?.v || 'Stage AU'
+        }
+      }
+
+      setStageNames(extractedStageNames)
+
+      // Process INDENT-PO data (start from the row after headers, usually row 2 or 3)
       let processedIndentPoData = indentPoData.table.rows
         .map((row, index) => {
-          if (!row.c) return null
+          if (!row.c || index === 0) return null // Skip header row
           return {
             id: `po-${index}`,
             date: parseDateFromSheet(row.c[0]?.v), // Column 0 (A): Date
@@ -275,33 +341,60 @@ export default function Dashboard() {
             vendorName: row.c[4]?.v, // Column 4 (E): Vendor Name
             material: row.c[5]?.v, // Column 5 (F): Material
             poQty: Number.parseFloat(row.c[23]?.v) || 0, // Column 23 (X): PO Quantity
-            poTimestamp: row.c[18]?.v, // Column 18 (S): PO Number / PO Date (used for KPI "Pending POs" status)
-            pendingQty: Number.parseFloat(row.c[33]?.v) || 0, // Column 33 (AH): Pending Quantity (used for "PO Quantity by Status" and table statuses)
+            poTimestamp: row.c[18]?.v, // Column 18 (S): PO Number / PO Date
+            pendingQty: Number.parseFloat(row.c[33]?.v) || 0, // Column 33 (AH): Pending Quantity
             notes: row.c[16]?.v, // Column 16 (Q): Notes
+            // Add actual columns for pending stages (M=12, S=18, AL=37, AO=40)
+            actualM: row.c[12]?.v, // Column M
+            actualS: row.c[18]?.v, // Column S
+            actualAL: row.c[37]?.v, // Column AL
+            actualAO: row.c[40]?.v, // Column AO
           }
         })
-        .filter((p) => p && p.rlNo) // Filter out rows without RL No.
+        .filter((p) => p && p.rlNo)
 
-      // Process LIFT-ACCOUNTS data - UPDATED FIRM NAME COLUMN INDEX TO BD (55)
+      // Process LIFT-ACCOUNTS data
       let processedLiftAccountData = liftAccountsData.table.rows
         .map((row, index) => {
-          if (!row.c) return null
+          if (!row.c || index === 0) return null // Skip header row
           return {
             id: `lift-${index}`,
             rlNo: row.c[2]?.v, // Column 2 (C): RL No. / Indent No.
             deliveryOrderNo: row.c[6]?.v, // Column 6 (G): Delivery Order No.
             liftedQty: Number.parseFloat(row.c[9]?.v) || 0, // Column 9 (J): Lifted Quantity
-            receivedTimestamp: row.c[20]?.v, // Column 20 (U): Received Timestamp (or date of receipt)
+            receivedTimestamp: row.c[20]?.v, // Column 20 (U): Received Timestamp
             receivedQty: Number.parseFloat(row.c[23]?.v) || 0, // Column 23 (X): Received Quantity
-            firmName: row.c[55]?.v, // Column 55 (BD): Firm Name - UPDATED INDEX
+            firmName: row.c[55]?.v, // Column 55 (BD): Firm Name
             vendorName: row.c[3]?.v, // Column 3 (D): Vendor Name
             material: row.c[5]?.v, // Column 5 (F): Material
             notes: row.c[21]?.v, // Column 21 (V): Notes
+            // Add actual columns for pending stages (U=20, AE=30, AJ=35, BB=53)
+            actualU: row.c[20]?.v, // Column U
+            actualAE: row.c[30]?.v, // Column AE
+            actualAJ: row.c[35]?.v, // Column AJ
+            actualBB: row.c[53]?.v, // Column BB
           }
         })
-        .filter((l) => l && l.rlNo) // Filter out rows without RL No.
+        .filter((l) => l && l.rlNo)
 
-      // Apply firm-based filtering - UPDATED LOGIC
+      // Process ACCOUNTS data
+      let processedAccountsData = accountsData.table.rows
+        .map((row, index) => {
+          if (!row.c || index === 0) return null // Skip header row
+          return {
+            id: `accounts-${index}`,
+            rlNo: row.c[2]?.v, // Assuming RL No is in column C (index 2)
+            // Add actual columns for pending stages (AA=26, AF=31, AK=36, AP=41, AU=46)
+            actualAA: row.c[26]?.v, // Column AA
+            actualAF: row.c[31]?.v, // Column AF
+            actualAK: row.c[36]?.v, // Column AK
+            actualAP: row.c[41]?.v, // Column AP
+            actualAU: row.c[46]?.v, // Column AU
+          }
+        })
+        .filter((a) => a && a.rlNo)
+
+      // Apply firm-based filtering
       if (!allowedSteps.includes("admin") && user?.firmName && user.firmName.toLowerCase() !== "all") {
         const userFirmNameLower = user.firmName.toLowerCase()
         console.log("Dashboard: Applying firm filtering for:", user.firmName)
@@ -322,18 +415,19 @@ export default function Dashboard() {
 
       setAllPurchaseData(processedIndentPoData)
       setAllLiftAccountData(processedLiftAccountData)
+      setAllAccountsData(processedAccountsData)
     } catch (e) {
       const errorMessage = `Failed to fetch dashboard data: ${e.message}. 
   
 Possible causes:
 - Google Sheets may not be publicly accessible
-- Sheet names might have changed (expecting "INDENT-PO" and "LIFT-ACCOUNTS")
+- Sheet names might have changed (expecting "INDENT-PO", "LIFT-ACCOUNTS", and "ACCOUNTS")
 - Network connectivity issues
 - Google Sheets API rate limiting
 
 Please check:
 1. Sheet permissions are set to "Anyone with the link can view"
-2. Sheet names match exactly: "INDENT-PO" and "LIFT-ACCOUNTS"
+2. Sheet names match exactly: "INDENT-PO", "LIFT-ACCOUNTS", and "ACCOUNTS"
 3. Your internet connection is stable`
 
       setError(errorMessage)
@@ -341,7 +435,7 @@ Please check:
     } finally {
       setLoading(false)
     }
-  }, [user, allowedSteps]) // Added user and allowedSteps to useCallback dependencies
+  }, [user, allowedSteps])
 
   useEffect(() => {
     fetchData()
@@ -370,28 +464,23 @@ Please check:
     }
   }, [allPurchaseData, allLiftAccountData])
 
-  // Status options for filter dropdown. This is about the *material lift status*
   const statusOptions = ["Pending", "Complete"]
 
   const filteredIndentPoData = useMemo(() => {
     return allPurchaseData
       .filter((po) => {
-        // Determine status based on pendingQty for filtering consistency in tables
         const materialLiftStatus = po.pendingQty === 0 ? "Complete" : "Pending"
         if (dateRange?.from && po.date && po.date < dateRange.from) return false
         if (dateRange?.to && po.date && po.date > dateRange.to) return false
         if (filters.rlNo && !po.rlNo?.toLowerCase().includes(filters.rlNo.toLowerCase())) return false
         if (filters.vendorName !== "all" && po.vendorName !== filters.vendorName) return false
         if (filters.material !== "all" && po.material !== filters.material) return false
-        // Use materialLiftStatus for filtering by 'PO Status' dropdown
         if (filters.status !== "all" && materialLiftStatus !== filters.status) return false
         if (filters.firmName !== "all" && po.firmName !== filters.firmName) return false
         return true
       })
       .map((po) => ({
         ...po,
-        // Assign the calculated material lift status back to the po object for consistent rendering/use
-        // This is different from the KPI 'pendingPOs' which uses poTimestamp
         materialLiftStatus: po.pendingQty === 0 ? "Complete" : "Pending",
       }))
   }, [allPurchaseData, dateRange, filters])
@@ -406,12 +495,92 @@ Please check:
     })
   }, [allLiftAccountData, filters])
 
+  // --- Pending Stages Data ---
+// --- Pending Stages Data ---
+const pendingStagesData = useMemo(() => {
+  const pendingCounts = []
+
+  // Hardcoded stage names mapping
+  const stageNames = {
+    indentPo: {
+      M: 'Indent Approvals',
+      S: 'Generate Purchase Order (PO)',
+      AL: 'Po Entry In Tally',
+      AO: 'Get Lift The Item'
+    },
+    liftAccounts: {
+      U: 'Receipt Of Material/ Physical Quality Check',
+      AE: 'Bilty Entry',
+      AJ: 'Lab Testing Is The Quality Good',
+      BB: 'Final Tally entry'
+    },
+    accounts: {
+      AA: 'Rectify The Mistake & Bilty Add',
+      AF: 'Audit Data',
+      AK: 'Rectify The Mistake 2',
+      AP: 'Take Entry By Tally',
+      AU: 'Again For Auditing'
+    }
+  }
+
+  // Count pending for INDENT-PO stages using hardcoded stage names
+  const indentPoStages = [
+    { key: 'actualM', columnName: 'M' },
+    { key: 'actualS', columnName: 'S' },
+    { key: 'actualAL', columnName: 'AL' },
+    { key: 'actualAO', columnName: 'AO' },
+  ]
+
+  indentPoStages.forEach(({ key, columnName }) => {
+    const pendingCount = filteredIndentPoData.filter(po => !po[key] || po[key] === null || po[key] === '').length
+    pendingCounts.push({
+      stageName: stageNames.indentPo[columnName],
+      pendingCount: pendingCount
+    })
+  })
+
+  // Count pending for LIFT-ACCOUNTS stages using hardcoded stage names
+  const liftAccountsStages = [
+    { key: 'actualU', columnName: 'U' },
+    { key: 'actualAE', columnName: 'AE' },
+    { key: 'actualAJ', columnName: 'AJ' },
+    { key: 'actualBB', columnName: 'BB' },
+  ]
+
+  liftAccountsStages.forEach(({ key, columnName }) => {
+    const pendingCount = filteredLiftAccountData.filter(lift => !lift[key] || lift[key] === null || lift[key] === '').length
+    pendingCounts.push({
+      stageName: stageNames.liftAccounts[columnName],
+      pendingCount: pendingCount
+    })
+  })
+
+  // Count pending for ACCOUNTS stages using hardcoded stage names
+  const accountsStages = [
+    { key: 'actualAA', columnName: 'AA' },
+    { key: 'actualAF', columnName: 'AF' },
+    { key: 'actualAK', columnName: 'AK' },
+    { key: 'actualAP', columnName: 'AP' },
+    { key: 'actualAU', columnName: 'AU' },
+  ]
+
+  accountsStages.forEach(({ key, columnName }) => {
+    const pendingCount = allAccountsData.filter(account => !account[key] || account[key] === null || account[key] === '').length
+    pendingCounts.push({
+      stageName: stageNames.accounts[columnName],
+      pendingCount: pendingCount
+    })
+  })
+
+  return pendingCounts
+}, [filteredIndentPoData, filteredLiftAccountData, allAccountsData])
+
   // --- Enhanced Data for Overview Tab ---
   const overviewData = useMemo(() => {
     const kpis = {
       totalPOs: 0,
-      pendingPOs: 0, // KPI for POs not yet issued/finalized (based on poTimestamp)
-      completedPOs: 0, // KPI for POs issued/finalized (based on poTimestamp)
+      pendingPOs: 0,
+      completedPOs: 0,
       totalPoQuantity: 0,
       totalPendingQuantity: 0,
       totalReceivedQuantity: 0,
@@ -420,25 +589,20 @@ Please check:
     const vendorCounts = {}
     const materialQuantities = {}
     const vendorQuantities = {}
-    const poQuantityByStatus = { Completed: 0, Pending: 0 } // For the PO quantity pie chart, still based on pendingQty
+    const poQuantityByStatus = { Completed: 0, Pending: 0 }
 
-    // Use a Set to count unique POs (by rlNo) for totalPOs KPI
     const uniquePOsByRlNo = new Set()
 
     filteredIndentPoData.forEach((po) => {
-      uniquePOsByRlNo.add(po.rlNo) // Track unique POs for total count
+      uniquePOsByRlNo.add(po.rlNo)
 
-      // --- KPI Calculations (based on poTimestamp for issuance status) ---
-      // A PO is considered 'pending' for KPI if its poTimestamp is null or empty
-      const isPoPendingForKPI = !po.poTimestamp // Check for null or empty string
+      const isPoPendingForKPI = !po.poTimestamp
       if (isPoPendingForKPI) {
         kpis.pendingPOs += 1
       } else {
         kpis.completedPOs += 1
       }
 
-      // --- Quantity/Material Lift Status Calculations (based on pendingQty) ---
-      // This logic is for the PO quantity pie chart and the Pending/Complete counts related to material movement
       const isMaterialLiftComplete = po.pendingQty === 0
       if (isMaterialLiftComplete) {
         poQuantityByStatus["Completed"] += po.poQty
@@ -447,9 +611,8 @@ Please check:
       }
 
       kpis.totalPoQuantity += po.poQty
-      kpis.totalPendingQuantity += po.pendingQty // This is the sum of quantities still pending lift/receipt
+      kpis.totalPendingQuantity += po.pendingQty
 
-      // --- Other data for charts/tables ---
       if (po.vendorName) {
         vendorCounts[po.vendorName] = (vendorCounts[po.vendorName] || 0) + 1
       }
@@ -461,7 +624,7 @@ Please check:
       }
     })
 
-    kpis.totalPOs = uniquePOsByRlNo.size // Set total POs to the count of unique RL Numbers
+    kpis.totalPOs = uniquePOsByRlNo.size
 
     filteredLiftAccountData.forEach((lift) => {
       kpis.totalReceivedQuantity += lift.receivedQty
@@ -499,9 +662,8 @@ Please check:
 
   // --- Data for Purchase Tab Tables ---
   const purchaseTabTables = useMemo(() => {
-    // Tables use materialLiftStatus for consistency with their content (pending/received materials)
     const pendingLift = filteredIndentPoData.filter((po) => po.materialLiftStatus === "Pending")
-    const inTransit = filteredLiftAccountData.filter((lift) => !lift.receivedTimestamp) // Assuming in-transit means not yet received
+    const inTransit = filteredLiftAccountData.filter((lift) => !lift.receivedTimestamp)
     const received = filteredLiftAccountData.filter((lift) => lift.receivedTimestamp)
 
     return { pendingLift, inTransit, received }
@@ -698,7 +860,7 @@ Please check:
         </Card>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 max-w-md mx-auto mb-6 bg-white border border-gray-200 rounded-lg shadow-sm p-1">
+          <TabsList className="grid w-full grid-cols-3 max-w-lg mx-auto mb-6 bg-white border border-gray-200 rounded-lg shadow-sm p-1">
             <TabsTrigger value="overview" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
               <TrendingUp className="h-5 w-5" />
               Overview
@@ -706,6 +868,10 @@ Please check:
             <TabsTrigger value="purchase" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
               <List className="h-5 w-5" />
               Purchase Data
+            </TabsTrigger>
+            <TabsTrigger value="pending" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
+              <AlertTriangle className="h-5 w-5" />
+              Pending
             </TabsTrigger>
           </TabsList>
 
@@ -1046,6 +1212,106 @@ Please check:
                 </Card>
               </TabsContent>
             </Tabs>
+          </TabsContent>
+
+          <TabsContent value="pending" className="w-full space-y-6">
+            <Card className="shadow-md border-gray-200">
+              <CardHeader className="p-4 border-b border-gray-200">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-amber-600" />
+                  Pending Stages Overview ({pendingStagesData.reduce((sum, stage) => sum + stage.pendingCount, 0)} Total Pending)
+                </CardTitle>
+                <CardDescription className="text-sm text-gray-500">
+                  Track pending counts across all workflow stages
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-gray-50 hover:bg-gray-50">
+                        <TableHead className="font-bold text-gray-600 py-3 px-4">Stage Name</TableHead>
+                        <TableHead className="text-right font-bold text-gray-600">Pending Count</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pendingStagesData.length > 0 ? (
+                        pendingStagesData.map((stage, index) => (
+                          <TableRow key={index} className="hover:bg-amber-50/30">
+                            <TableCell className="font-medium text-gray-700 py-3 px-4">
+                              {stage.stageName}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Badge 
+                                className={`font-semibold ${
+                                  stage.pendingCount > 0 
+                                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' 
+                                    : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                }`}
+                              >
+                                {stage.pendingCount}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={2} className="text-center h-24 text-gray-500">
+                            No pending stages data available.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Summary Cards for Quick Overview */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <Card className="shadow-sm border-gray-200">
+                <CardContent className="p-4 text-center">
+                  <div className="p-3 bg-purple-100 rounded-full inline-block mb-2">
+                    <FileText className="h-5 w-5 text-purple-600" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600">INDENT-PO Pending</p>
+                  <p className="text-2xl font-bold text-purple-600">
+                    {pendingStagesData
+                      .slice(0, 4)
+                      .reduce((sum, stage) => sum + stage.pendingCount, 0)
+                    }
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="shadow-sm border-gray-200">
+                <CardContent className="p-4 text-center">
+                  <div className="p-3 bg-blue-100 rounded-full inline-block mb-2">
+                    <Truck className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600">LIFT-ACCOUNTS Pending</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {pendingStagesData
+                      .slice(4, 8)
+                      .reduce((sum, stage) => sum + stage.pendingCount, 0)
+                    }
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="shadow-sm border-gray-200">
+                <CardContent className="p-4 text-center">
+                  <div className="p-3 bg-emerald-100 rounded-full inline-block mb-2">
+                    <CheckCircle className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600">ACCOUNTS Pending</p>
+                  <p className="text-2xl font-bold text-emerald-600">
+                    {pendingStagesData
+                      .slice(8)
+                      .reduce((sum, stage) => sum + stage.pendingCount, 0)
+                    }
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>

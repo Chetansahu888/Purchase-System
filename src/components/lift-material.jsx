@@ -39,12 +39,12 @@ function formatTimestamp(timestampStr) {
     return "Invalid Date"
   }
   const date = new Date(
-    Number.parseInt(numbers[0]), // Year
-    Number.parseInt(numbers[1]) - 1, // Month (0-based)
-    Number.parseInt(numbers[2]), // Day
-    Number.parseInt(numbers[3]), // Hours
-    Number.parseInt(numbers[4]), // Minutes
-    Number.parseInt(numbers[5]), // Seconds
+    parseInt(numbers[0]), // Year
+    parseInt(numbers[1]) - 1, // Month (0-based)
+    parseInt(numbers[2]), // Day
+    parseInt(numbers[3]), // Hours
+    parseInt(numbers[4]), // Minutes
+    parseInt(numbers[5]), // Seconds
   )
   return date.toLocaleString("en-GB", {
     day: "2-digit",
@@ -133,6 +133,7 @@ export default function LiftMaterial() {
     totalQuantity: "",
     billImage: null,
     additionalTruckQty: "",
+    transportRate: "", // Transport Rate field (not required for validation)
   })
   const [formErrors, setFormErrors] = useState({})
   const [activeTab, setActiveTab] = useState("availablePOs")
@@ -169,7 +170,6 @@ export default function LiftMaterial() {
       if (!response.ok) {
         throw new Error(`Failed to fetch Master data: ${response.status} ${response.statusText}`)
       }
-
       let text = await response.text()
       if (text.startsWith("google.visualization.Query.setResponse(")) {
         text = text.substring(text.indexOf("(") + 1, text.lastIndexOf(")"))
@@ -234,90 +234,89 @@ export default function LiftMaterial() {
     }
   }, [SHEET_ID, MASTER_SHEET_NAME])
 
- const fetchPurchaseOrders = useCallback(async () => {
-  setLoadingPOs(true)
-  setError(null)
-  try {
-    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(
-      INDENT_PO_SHEET,
-    )}`
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error(`Failed to fetch PO data: ${response.status}`)
-    }
-    const text = await response.text()
-    const jsonStart = text.indexOf("{")
-    const jsonEnd = text.lastIndexOf("}")
-    const jsonString = text.substring(jsonStart, jsonEnd + 1)
-    const data = JSON.parse(jsonString)
+  const fetchPurchaseOrders = useCallback(async () => {
+    setLoadingPOs(true)
+    setError(null)
+    try {
+      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(
+        INDENT_PO_SHEET,
+      )}`
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch PO data: ${response.status}`)
+      }
+      const text = await response.text()
+      const jsonStart = text.indexOf("{")
+      const jsonEnd = text.lastIndexOf("}")
+      const jsonString = text.substring(jsonStart, jsonEnd + 1)
+      const data = JSON.parse(jsonString)
 
-    let processedRows = []
-    if (data.table && data.table.cols && data.table.rows) {
-      processedRows = (data.table.rows || [])
-        .slice(1)
-        .filter(
-          (row) =>
-            row.c &&
-            row.c.some((cell) => cell && cell.v !== null && cell.v !== undefined && String(cell.v).trim() !== ""),
-        )
-        .map((row, gvizRowIndex) => {
-          const rowData = {}
-          rowData._id = Math.random().toString(36).substring(2, 15) + gvizRowIndex
-          rowData._rowIndex = gvizRowIndex + 8
-          if (row.c) {
-            row.c.forEach((cell, cellIndex) => {
-              const colId = `col${cellIndex}`
-              const value = cell && cell.v !== undefined && cell.v !== null ? cell.v : ""
-              rowData[colId] = value
-              if (cell && cell.f) rowData[`${colId}_formatted`] = cell.f
-            })
-          }
-          return rowData
-        })
-    } else if (data.status === "error") {
-      throw new Error(data.errors?.[0]?.detailed_message || "PO Sheet data is malformed or empty.")
-    }
+      let processedRows = []
+      if (data.table && data.table.cols && data.table.rows) {
+        processedRows = (data.table.rows || [])
+          .slice(1)
+          .filter(
+            (row) =>
+              row.c &&
+              row.c.some((cell) => cell && cell.v !== null && cell.v !== undefined && String(cell.v).trim() !== ""),
+          )
+          .map((row, gvizRowIndex) => {
+            const rowData = {}
+            rowData._id = Math.random().toString(36).substring(2, 15) + gvizRowIndex
+            rowData._rowIndex = gvizRowIndex + 8
+            if (row.c) {
+              row.c.forEach((cell, cellIndex) => {
+                const colId = `col${cellIndex}`
+                const value = cell && cell.v !== undefined && cell.v !== null ? cell.v : ""
+                rowData[colId] = value
+                if (cell && cell.f) rowData[`${colId}_formatted`] = cell.f
+              })
+            }
+            return rowData
+          })
+      } else if (data.status === "error") {
+        throw new Error(data.errors?.[0]?.detailed_message || "PO Sheet data is malformed or empty.")
+      }
 
-    const filteredRows = processedRows.filter(
-      (row) =>
-        row.col39 !== null && // Column AN (Planned) is filled
-        String(row.col39).trim() !== "" &&
-        (row.col40 === null || String(row.col40).trim() === ""), // Column AO (Lifted On Timestamp) is empty
-    )
-
-    let formattedData = filteredRows.map((row) => ({
-      id: `PO-${row._rowIndex}`,
-      indentNo: String(row.col1 || "").trim(),
-      firmName: String(row.col2 || "").trim(),
-      vendorName: String(row.col4 || "").trim(),
-      rawMaterialName: String(row.col5 || "").trim(),
-      quantity: String(row.col23 || "").trim(),
-      _rowIndex: row._rowIndex,
-      rate: String(row.col21 || "").trim(),
-      alumina: String(row.col30 || "").trim(),
-      iron: String(row.col31 || "").trim(),
-      pendingQty: String(row.col33 || "").trim(),
-      planned: String(row.col39_formatted || "").trim(),
-      whatIsToBeDone: String(row.col10 || "").trim(),
-    }))
-
-    if (user?.firmName && user.firmName.toLowerCase() !== "all") {
-      const userFirmNameLower = user.firmName.toLowerCase()
-      formattedData = formattedData.filter(
-        (po) => po.firmName && String(po.firmName).toLowerCase() === userFirmNameLower,
+      const filteredRows = processedRows.filter(
+        (row) =>
+          row.col39 !== null && // Column AN (Planned) is filled
+          String(row.col39).trim() !== "" &&
+          (row.col40 === null || String(row.col40).trim() === ""), // Column AO (Lifted On Timestamp) is empty
       )
+
+      let formattedData = filteredRows.map((row) => ({
+        id: `PO-${row._rowIndex}`,
+        indentNo: String(row.col1 || "").trim(),
+        firmName: String(row.col2 || "").trim(),
+        vendorName: String(row.col4 || "").trim(),
+        rawMaterialName: String(row.col5 || "").trim(),
+        quantity: String(row.col23 || "").trim(),
+        _rowIndex: row._rowIndex,
+        rate: String(row.col24 || "").trim(), // Column Y (index 24) - PO Rate for validation
+        alumina: String(row.col30 || "").trim(),
+        iron: String(row.col31 || "").trim(),
+        pendingQty: String(row.col33 || "").trim(),
+        planned: String(row.col39_formatted || "").trim(),
+        whatIsToBeDone: String(row.col10 || "").trim(),
+      }))
+
+      if (user?.firmName && user.firmName.toLowerCase() !== "all") {
+        const userFirmNameLower = user.firmName.toLowerCase()
+        formattedData = formattedData.filter(
+          (po) => po.firmName && String(po.firmName).toLowerCase() === userFirmNameLower,
+        )
+      }
+
+      setPurchaseOrders(formattedData)
+    } catch (error) {
+      setError(`Failed to load PO data: ${error.message}`)
+      setPurchaseOrders([])
+    } finally {
+      setLoadingPOs(false)
     }
+  }, [SHEET_ID, INDENT_PO_SHEET, user])
 
-    setPurchaseOrders(formattedData)
-  } catch (error) {
-    setError(`Failed to load PO data: ${error.message}`)
-    setPurchaseOrders([])
-  } finally {
-    setLoadingPOs(false)
-  }
-}, [SHEET_ID, INDENT_PO_SHEET, user]) 
-
-// Removed materialLifts dependency
   const fetchMaterialLifts = useCallback(async () => {
     setLoadingLifts(true)
     setError(null)
@@ -358,7 +357,6 @@ export default function LiftMaterial() {
             rowData[colId] = value
             if (cell && cell.f) rowData[`${colId}_formatted`] = cell.f
           })
-
           if (rowData.col0 && typeof rowData.col0 === "string" && rowData.col0.startsWith("Date(")) {
             rowData.col0_formatted = formatTimestamp(rowData.col0)
           } else if (rowData.col0) {
@@ -430,6 +428,7 @@ export default function LiftMaterial() {
             ? row.col0_formatted.trim()
             : String(row.col0 || "").trim(),
         firmName: String(row.col55 || "").trim(),
+        transportRate: String(row.col58 || "").trim(), // Transport Rate from column BG
       }))
 
       if (user?.firmName && user.firmName.toLowerCase() !== "all") {
@@ -444,12 +443,12 @@ export default function LiftMaterial() {
         const parts = dateString.match(/^(\d{2})\/(\d{2})\/(\d{4})\s(\d{2}):(\d{2}):(\d{2})$/)
         if (!parts) return null
         return new Date(
-          Number.parseInt(parts[3], 10),
-          Number.parseInt(parts[2], 10) - 1,
-          Number.parseInt(parts[1], 10),
-          Number.parseInt(parts[4], 10),
-          Number.parseInt(parts[5], 10),
-          Number.parseInt(parts[6], 10),
+          parseInt(parts[3], 10),
+          parseInt(parts[2], 10) - 1,
+          parseInt(parts[1], 10),
+          parseInt(parts[4], 10),
+          parseInt(parts[5], 10),
+          parseInt(parts[6], 10),
         ).getTime()
       }
 
@@ -507,7 +506,7 @@ export default function LiftMaterial() {
       vendorName: [...vendors].sort(),
       materialName: [...materials].sort(),
       liftType: [...types].sort(),
-      totalQuantity: [...quantities].sort((a, b) => Number.parseFloat(a) - Number.parseFloat(b)),
+      totalQuantity: [...quantities].sort((a, b) => parseFloat(a) - parseFloat(b)),
       orderNumber: [...orders].sort(),
     }
   }, [purchaseOrders, materialLifts])
@@ -564,13 +563,14 @@ export default function LiftMaterial() {
       rate: "",
       truckQty: "",
       Type: "",
-      // biltyNo: "",
+      biltyNo: "",
       indentNo: po.indentNo,
       vendorName: po.vendorName,
       material: po.rawMaterialName,
       totalQuantity: po.quantity,
       billImage: null,
       additionalTruckQty: "",
+      transportRate: "", // Transport Rate field
     })
     setFormErrors({})
     setShowPopup(true)
@@ -590,13 +590,14 @@ export default function LiftMaterial() {
       rate: "",
       truckQty: "",
       Type: "",
-      // biltyNo: "",
+      biltyNo: "",
       indentNo: "",
       vendorName: "",
       material: "",
       totalQuantity: "",
       billImage: null,
       additionalTruckQty: "",
+      transportRate: "", // Transport Rate field
     })
     setFormErrors({})
   }
@@ -619,236 +620,223 @@ export default function LiftMaterial() {
   }
 
   const validateForm = () => {
-  const newErrors = {};
-  const requiredFields = [
-    "billNo",
-    "Arealifting",
-    "Type",
-    "liftingLeadTime",
-    "truckNo",
-    "driverNo",
-    "TransporterName",
-    "rateType",
-    "rate",
-    "truckQty",
-    // "biltyNo",
-  ];
+    const newErrors = {};
+    const requiredFields = [
+      "billNo",
+      "Arealifting",
+      "Type",
+      "liftingLeadTime",
+      "truckNo",
+      "driverNo",
+      "TransporterName",
+      "rateType",
+      "rate",
+      "truckQty",
+      // "transportRate", // Removed as not required for validation
+    ];
 
-  requiredFields.forEach((field) => {
-    let readableField = field.replace(/([A-Z])/g, " $1").replace(/^./, (str) => str.toUpperCase());
-    if (field === "Arealifting") readableField = "Area Lifting";
-    if (field === "TransporterName") readableField = "Transporter Name";
-    if (!formData[field] || String(formData[field]).trim() === "") {
-      newErrors[field] = `${readableField} is required.`;
+    requiredFields.forEach((field) => {
+      let readableField = field.replace(/([A-Z])/g, " $1").replace(/^./, (str) => str.toUpperCase());
+      if (field === "Arealifting") readableField = "Area Lifting";
+      if (field === "TransporterName") readableField = "Transporter Name";
+      
+      if (!formData[field] || String(formData[field]).trim() === "") {
+        newErrors[field] = `${readableField} is required.`;
+      }
+    });
+
+    if (formData.rate && isNaN(parseFloat(formData.rate))) newErrors.rate = "Rate must be a valid number.";
+    if (formData.transportRate && isNaN(parseFloat(formData.transportRate))) newErrors.transportRate = "Transport Rate must be a valid number.";
+    if (formData.truckQty && isNaN(parseFloat(formData.truckQty)))
+      newErrors.truckQty = "Truck Qty must be a valid number.";
+    if (
+      formData.liftingLeadTime &&
+      (isNaN(parseInt(formData.liftingLeadTime)) || parseInt(formData.liftingLeadTime) < 0)
+    )
+      newErrors.liftingLeadTime = "Lead Time must be a non-negative number.";
+    if (formData.additionalTruckQty && isNaN(parseFloat(formData.additionalTruckQty))) {
+      newErrors.additionalTruckQty = "Truck Quantity must be a valid number.";
     }
-  });
 
-  if (formData.rate && isNaN(Number.parseFloat(formData.rate))) newErrors.rate = "Rate must be a valid number.";
-  if (formData.truckQty && isNaN(Number.parseFloat(formData.truckQty)))
-    newErrors.truckQty = "Truck Qty must be a valid number.";
-  if (
-    formData.liftingLeadTime &&
-    (isNaN(Number.parseInt(formData.liftingLeadTime)) || Number.parseInt(formData.liftingLeadTime) < 0)
-  )
-    newErrors.liftingLeadTime = "Lead Time must be a non-negative number.";
-  if (formData.additionalTruckQty && isNaN(Number.parseFloat(formData.additionalTruckQty))) {
-    newErrors.additionalTruckQty = "Truck Quantity must be a valid number.";
-  }
+    // NO RATE VALIDATION DURING FORM SUBMISSION
+    // Material Rate validation will be done after submission for display purposes only
 
-  setFormErrors(newErrors);
-  return Object.keys(newErrors).length === 0;
-};
-
-
+    setFormErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const uploadFileToDrive = async (file, folderId) => {
-    if (!folderId) {
-      throw new Error("Configuration error: Drive Folder ID not specified.");
-    }
-    try {
-      const base64Data = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = (error) => reject(error);
-      });
+    if (!folderId) {
+      throw new Error("Configuration error: Drive Folder ID not specified.");
+    }
+    try {
+      const base64Data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = (error) => reject(error);
+      });
 
-      const payload = new URLSearchParams();
-      payload.append("action", "uploadFile");
-      payload.append("fileName", file.name);
-      payload.append("mimeType", file.type);
-      payload.append("base64Data", base64Data);
-      payload.append("folderId", folderId);
+      const payload = new URLSearchParams();
+      payload.append("action", "uploadFile");
+      payload.append("fileName", file.name);
+      payload.append("mimeType", file.type);
+      payload.append("base64Data", base64Data);
+      payload.append("folderId", folderId);
 
-      const response = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: payload.toString(),
-      });
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: payload.toString(),
+      });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Drive upload failed: ${response.status}. ${errorText}`);
-      }
-      const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.message || "Failed to upload file via Apps Script");
-      }
-      return result.fileUrl;
-    } catch (error) {
-      console.error("Error uploading file to Google Drive:", error);
-      throw error;
-    }
-  };
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Drive upload failed: ${response.status}. ${errorText}`);
+      }
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.message || "Failed to upload file via Apps Script");
+      }
+      return result.fileUrl;
+    } catch (error) {
+      console.error("Error uploading file to Google Drive:", error);
+      throw error;
+    }
+  };
 
   const generateLiftId = async () => {
-  try {
-    const params = new URLSearchParams({ action: "getNextLiftId" })
-    const response = await fetch(`${API_URL}?${params.toString()}`)
+    try {
+      const params = new URLSearchParams({ action: "getNextLiftId" })
+      const response = await fetch(`${API_URL}?${params.toString()}`)
 
-    if (!response.ok) {
-      throw new Error(`Failed to get next Lift ID from server: ${response.status}`)
-    }
+      if (!response.ok) {
+        throw new Error(`Failed to get next Lift ID from server: ${response.status}`)
+      }
 
-    const result = await response.json()
-    if (result.success && result.nextId) {
-      return result.nextId
-    } else {
-      throw new Error(result.message || "Server did not return a valid next ID.")
-    }
-  } catch (error) {
-    console.error("[generateLiftId] Error during server-side ID generation:", error)
-    console.warn("[generateLiftId] Falling back to local materialLifts state for Lift ID generation.")
+      const result = await response.json()
+      if (result.success && result.nextId) {
+        return result.nextId
+      } else {
+        throw new Error(result.message || "Server did not return a valid next ID.")
+      }
+    } catch (error) {
+      console.error("[generateLiftId] Error during server-side ID generation:", error)
+      console.warn("[generateLiftId] Falling back to local materialLifts state for Lift ID generation.")
 
-    let maxIdNum = 0
-    if (Array.isArray(materialLifts)) {
-      materialLifts.forEach((lift) => {
-        if (lift && typeof lift.id === "string" && lift.id.startsWith("LF-")) {
-          const numPart = Number.parseInt(lift.id.substring(3), 10)
-          if (!isNaN(numPart) && numPart > maxIdNum) maxIdNum = numPart
-        }
-      })
-    }
-    const fallbackLiftId = `LF-${String(maxIdNum + 1).padStart(3, "0")}`
-    return fallbackLiftId
-  }
-}
-  const parseTimestampForSort = (dateString) => {
-    if (!dateString || typeof dateString !== "string") return null
-    const parts = dateString.match(/^(\d{2})\/(\d{2})\/(\d{4})\s(\d{2}):(\d{2}):(\d{2})$/)
-    if (!parts) return null
-    return new Date(
-      Number.parseInt(parts[3], 10),
-      Number.parseInt(parts[2], 10) - 1,
-      Number.parseInt(parts[1], 10),
-      Number.parseInt(parts[4], 10),
-      Number.parseInt(parts[5], 10),
-      Number.parseInt(parts[6], 10),
-    ).getTime()
+      let maxIdNum = 0
+      if (Array.isArray(materialLifts)) {
+        materialLifts.forEach((lift) => {
+          if (lift && typeof lift.id === "string" && lift.id.startsWith("LF-")) {
+            const numPart = parseInt(lift.id.substring(3), 10)
+            if (!isNaN(numPart) && numPart > maxIdNum) maxIdNum = numPart
+          }
+        })
+      }
+      const fallbackLiftId = `LF-${String(maxIdNum + 1).padStart(3, "0")}`
+      return fallbackLiftId
+    }
   }
 
-// Update the handleSubmit function in your LiftMaterial.js
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
-// Update the handleSubmit function in your LiftMaterial.js
-
-const handleSubmit = async (e) => {
-  e.preventDefault();
-
-  if (!validateForm()) {
-    toast.error("Validation failed. Please check the required fields.");
-    return;
-  }
-
-  setIsSubmitting(true);
-
-  try {
-    const liftId = await generateLiftId();
-    const now = new Date();
-    const timestamp = now.toLocaleString("en-GB", { hour12: false }).replace(",", "");
-
-    // Upload bill image (if provided) - explicitly pass DRIVE_FOLDER_ID
-    const billImageUrl = formData.billImage 
-      ? await uploadFileToDrive(formData.billImage, DRIVE_FOLDER_ID) 
-      : "";
-
-    // Prepare the data for the new row in LIFT-ACCOUNTS
-    const liftLabRowData = Array(56).fill(""); 
-    liftLabRowData[0] = timestamp;
-    liftLabRowData[1] = liftId;
-    liftLabRowData[2] = formData.indentNo;
-    liftLabRowData[3] = formData.vendorName;
-    liftLabRowData[4] = formData.totalQuantity;
-    liftLabRowData[5] = formData.material;
-    liftLabRowData[6] = formData.billNo;
-    liftLabRowData[7] = formData.Arealifting;
-    liftLabRowData[8] = formData.liftingLeadTime;
-    liftLabRowData[9] = formData.truckQty;
-    liftLabRowData[10] = formData.Type;
-    liftLabRowData[11] = formData.TransporterName;
-    liftLabRowData[12] = formData.truckNo;
-    liftLabRowData[13] = formData.driverNo;
-    liftLabRowData[14] = formData.biltyNo || "";
-    liftLabRowData[15] = formData.rateType;
-    liftLabRowData[16] = formData.rate;
-    liftLabRowData[17] = billImageUrl;
-    liftLabRowData[18] = formData.additionalTruckQty || "";
-    liftLabRowData[55] = selectedPO?.firmName || "";
-
-    // First, insert the lift record
-    const liftLabParams = new URLSearchParams({
-      action: "insert",
-      sheetName: "LIFT-ACCOUNTS",
-      rowData: JSON.stringify(liftLabRowData),
-    });
-
-    const liftLabResponse = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: liftLabParams.toString(),
-    });
-
-    if (!liftLabResponse.ok) {
-      const errorText = await liftLabResponse.text();
-      throw new Error(`Failed to insert into LIFT-ACCOUNTS: ${errorText}`);
+    if (!validateForm()) {
+      toast.error("Validation failed. Please check the required fields.");
+      return;
     }
 
-    // Update the original PO row to mark it as lifted (column AO - index 40)
-    const updatePOParams = new URLSearchParams({
-      action: "updateCell",
-      sheetName: "INDENT-PO", 
-      row: selectedPO._rowIndex.toString(),
-      column: "40", // Column AO
-      value: timestamp
-    });
+    setIsSubmitting(true);
 
-    const updatePOResponse = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: updatePOParams.toString(),
-    });
+    try {
+      const liftId = await generateLiftId();
+      const now = new Date();
+      const timestamp = now.toLocaleString("en-GB", { hour12: false }).replace(",", "");
 
-    if (!updatePOResponse.ok) {
-      const errorText = await updatePOResponse.text();
-      throw new Error(`Failed to update PO status: ${errorText}`);
+      // Upload bill image (if provided) - explicitly pass DRIVE_FOLDER_ID
+      const billImageUrl = formData.billImage 
+        ? await uploadFileToDrive(formData.billImage, DRIVE_FOLDER_ID) 
+        : "";
+
+      // Prepare the data for the new row in LIFT-ACCOUNTS
+      const liftLabRowData = Array(59).fill(""); // Increased array size for BG column
+      liftLabRowData[0] = timestamp;
+      liftLabRowData[1] = liftId;
+      liftLabRowData[2] = formData.indentNo;
+      liftLabRowData[3] = formData.vendorName;
+      liftLabRowData[4] = formData.totalQuantity;
+      liftLabRowData[5] = formData.material;
+      liftLabRowData[6] = formData.billNo;
+      liftLabRowData[7] = formData.Arealifting;
+      liftLabRowData[8] = formData.liftingLeadTime;
+      liftLabRowData[9] = formData.truckQty;
+      liftLabRowData[10] = formData.Type;
+      liftLabRowData[11] = formData.TransporterName;
+      liftLabRowData[12] = formData.truckNo;
+      liftLabRowData[13] = formData.driverNo;
+      liftLabRowData[14] = formData.biltyNo || "";
+      liftLabRowData[15] = formData.rateType;
+      liftLabRowData[16] = formData.rate;
+      liftLabRowData[17] = billImageUrl;
+      liftLabRowData[18] = formData.additionalTruckQty || "";
+      liftLabRowData[55] = selectedPO?.firmName || "";
+      liftLabRowData[58] = formData.transportRate || ""; // Column BG (index 58) - Transport Rate
+
+      // First, insert the lift record
+      const liftLabParams = new URLSearchParams({
+        action: "insert",
+        sheetName: "LIFT-ACCOUNTS",
+        rowData: JSON.stringify(liftLabRowData),
+      });
+
+      const liftLabResponse = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: liftLabParams.toString(),
+      });
+
+      if (!liftLabResponse.ok) {
+        const errorText = await liftLabResponse.text();
+        throw new Error(`Failed to insert into LIFT-ACCOUNTS: ${errorText}`);
+      }
+
+      // Update the original PO row to mark it as lifted (column AO - index 40)
+      const updatePOParams = new URLSearchParams({
+        action: "updateCell",
+        sheetName: "INDENT-PO", 
+        row: selectedPO._rowIndex.toString(),
+        column: "40", // Column AO
+        value: timestamp
+      });
+
+      const updatePOResponse = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: updatePOParams.toString(),
+      });
+
+      if (!updatePOResponse.ok) {
+        const errorText = await updatePOResponse.text();
+        throw new Error(`Failed to update PO status: ${errorText}`);
+      }
+
+      toast.success(`Lift ${liftId} recorded successfully!`);
+      
+      // Refresh both tables to reflect the changes
+      await Promise.all([fetchPurchaseOrders(), fetchMaterialLifts()]);
+      handleClosePopup();
+
+    } catch (error) {
+      console.error("Error submitting lift form:", error);
+      toast.error(`Submission failed: ${error.message}`);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    toast.success(`Lift ${liftId} recorded successfully!`);
-    
-    // Refresh both tables to reflect the changes
-    await Promise.all([fetchPurchaseOrders(), fetchMaterialLifts()]);
-    handleClosePopup();
-
-  } catch (error) {
-    console.error("Error submitting lift form:", error);
-    toast.error(`Submission failed: ${error.message}`);
-  } finally {
-    setIsSubmitting(false);
-  }
-};
+  };
 
   const liftExistsForPO = (indentNo) => {
     if (!indentNo) return false
@@ -863,7 +851,21 @@ const handleSubmit = async (e) => {
     }
   }
 
-
+  const handleSelectAllColumns = (tab, columnsMeta, selectAll) => {
+    if (tab === "pos") {
+      const newVisibility = {}
+      columnsMeta.forEach((col) => {
+        newVisibility[col.dataKey] = col.alwaysVisible || selectAll
+      })
+      setVisiblePoColumns(newVisibility)
+    } else {
+      const newVisibility = {}
+      columnsMeta.forEach((col) => {
+        newVisibility[col.dataKey] = col.alwaysVisible || selectAll
+      })
+      setVisibleLiftsColumns(newVisibility)
+    }
+  }
 
   const renderCell = (item, column) => {
     const value = item[column.dataKey]
@@ -1195,7 +1197,7 @@ const handleSubmit = async (e) => {
                         {filteredMaterialLifts.length})
                       </CardTitle>
                       <CardDescription className="text-xs text-muted-foreground mt-0.5">
-                        Sorted from latest to oldest recorded lift.
+                        Sorted from latest to oldest recorded lift. Red rows indicate Material Rate mismatch with PO Rate.
                       </CardDescription>
                     </div>
                     <Popover>
@@ -1290,26 +1292,39 @@ const handleSubmit = async (e) => {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {filteredMaterialLifts.map((lift) => (
-                            <TableRow key={lift.id} className="hover:bg-purple-50/50">
-                              {LIFTS_COLUMNS_META.filter((col) => visibleLiftsColumns[col.dataKey]).map((column) => (
-                                <TableCell
-                                  key={column.dataKey}
-                                  className={`whitespace-nowrap text-xs px-3 py-2 ${
-                                    column.dataKey === "id" ? "font-medium text-primary" : "text-gray-700"
-                                  } ${
-                                    column.dataKey === "vendorName" ||
-                                    column.dataKey === "material" ||
-                                    column.dataKey === "transporterName"
-                                      ? "truncate max-w-[150px]"
-                                      : ""
-                                  }`}
-                                >
-                                  {renderCell(lift, column)}
-                                </TableCell>
-                              ))}
-                            </TableRow>
-                          ))}
+                          {filteredMaterialLifts.map((lift) => {
+                            // Check if Material Rate matches PO Rate - ONLY Material Rate comparison
+                            const liftMaterialRate = parseFloat(lift.rate) || 0;
+                            
+                            // Find corresponding PO rate from INDENT-PO sheet column Y
+                            const correspondingPO = purchaseOrders.find(po => po.indentNo === lift.indentNo);
+                            const poRate = parseFloat(correspondingPO?.rate) || 0;
+                            const materialRateMatches = Math.abs(liftMaterialRate - poRate) < 0.01;
+                            
+                            return (
+                              <TableRow 
+                                key={lift.id} 
+                                className={`hover:bg-purple-50/50 ${!materialRateMatches ? 'bg-red-50 border-red-700' : ''}`}
+                              >
+                                {LIFTS_COLUMNS_META.filter((col) => visibleLiftsColumns[col.dataKey]).map((column) => (
+                                  <TableCell
+                                    key={column.dataKey}
+                                    className={`whitespace-nowrap text-xs px-3 py-2 ${
+                                      column.dataKey === "id" ? "font-medium text-primary" : "text-gray-700"
+                                    } ${
+                                      column.dataKey === "vendorName" ||
+                                      column.dataKey === "material" ||
+                                      column.dataKey === "transporterName"
+                                        ? "truncate max-w-[150px]"
+                                        : ""
+                                    }`}
+                                  >
+                                    {renderCell(lift, column)}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            )
+                          })}
                         </TableBody>
                       </Table>
                     </div>
@@ -1386,7 +1401,6 @@ const handleSubmit = async (e) => {
                     },
                     { label: "Truck No.", name: "truckNo", type: "text", isRequired: true },
                     { label: "Driver No.", name: "driverNo", type: "text", isRequired: true },
-                    // { label: "Bilty No.", name: "biltyNo", type: "text", isRequired: false },
                     {
                       label: "Transporter Name",
                       name: "TransporterName",
@@ -1401,7 +1415,8 @@ const handleSubmit = async (e) => {
                       options: [{ value: "", label: "Select rate type" }, ...rateTypeOptions],
                       isRequired: true,
                     },
-                    { label: "Rate (INR)", name: "rate", type: "number", step: "any", isRequired: true },
+                    { label: "Material Rate (INR)", name: "rate", type: "number", step: "any", isRequired: true },
+                    { label: "Transport Rate (INR)", name: "transportRate", type: "number", step: "any", isRequired: false }, // Changed to not required
                     {
                       label: "Lifted Quantity (Units)",
                       name: "truckQty",

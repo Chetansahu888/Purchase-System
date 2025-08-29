@@ -5,24 +5,33 @@ const OriginalBillsFiledPage = () => {
   const [accountsData, setAccountsData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [editingRows, setEditingRows] = useState({});
-  const [formData, setFormData] = useState({});
-  const [submitting, setSubmitting] = useState({});
+  const [editingRow, setEditingRow] = useState(null); // Changed from editingRows object
+  const [formData, setFormData] = useState({}); // Simplified form data structure
+  const [submitting, setSubmitting] = useState(false); // Changed from submitting object
   const [submittedRows, setSubmittedRows] = useState(new Set());
 
   const SHEET_ID = "1NUxf4pnQ-CtCFUjA5rqLgYEJiU77wQlwVyimjt8RmFQ";
   const SHEET_NAME = "ACCOUNTS";
 
+  // Updated date format function to handle Date(year,month,day,hour,minute,second) format
   const formatDate = (dateString) => {
     if (!dateString || dateString === '') return '-';
     
     try {
       let date;
       
-      if (!isNaN(dateString) && parseFloat(dateString) > 30000) {
+      // Handle Google Sheets Date(YYYY,MM,DD,HH,MM,SS) format
+      const dateMatch = dateString.match(/^Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?\)$/);
+      if (dateMatch) {
+        const [, year, month, day, hours, minutes, seconds] = dateMatch.map(Number);
+        date = new Date(year, month - 1, day, hours || 0, minutes || 0, seconds || 0);
+      }
+      // Handle Excel serial number format from Google Sheets
+      else if (!isNaN(dateString) && parseFloat(dateString) > 30000) {
         const serialNumber = parseFloat(dateString);
         date = new Date((serialNumber - 25569) * 86400 * 1000);
       }
+      // Handle regular date formats
       else if (dateString.includes('/') || dateString.includes('-')) {
         date = new Date(dateString);
       }
@@ -41,6 +50,7 @@ const OriginalBillsFiledPage = () => {
       const minutes = date.getMinutes().toString().padStart(2, '0');
       const seconds = date.getSeconds().toString().padStart(2, '0');
       
+      // Format matching the second code: DD/MM/YYYY HH:MM:SS
       return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
       
     } catch (error) {
@@ -88,44 +98,36 @@ const OriginalBillsFiledPage = () => {
   };
 
   const initializeFormData = (rowId) => {
-    const formKey = `bills_${rowId}`;
-    
+    setFormData({
+      status: 'Not Done',
+      remarks: ''
+    });
+  };
+
+  const handleFormChange = (field, value) => {
     setFormData(prev => ({
       ...prev,
-      [formKey]: {
-        status: 'Not Done',
-        remarks: ''
-      }
+      [field]: value
     }));
   };
 
-  const handleFormChange = (rowId, field, value) => {
-    const formKey = `bills_${rowId}`;
-    setFormData(prev => ({
-      ...prev,
-      [formKey]: {
-        ...prev[formKey],
-        [field]: value
-      }
-    }));
-  };
+  const submitFormData = async () => {
+    if (!editingRow) return;
 
-  const submitFormData = async (rowId) => {
-    const formKey = `bills_${rowId}`;
-    const data = formData[formKey];
+    const data = formData;
     
     if (!data) {
       alert('No form data to submit');
       return;
     }
 
-    const row = accountsData.find(r => r.id === rowId);
+    const row = accountsData.find(r => r.id === editingRow);
     if (!row || !row.liftNumber) {
       alert('Error: Could not find lift number for this row');
       return;
     }
 
-    setSubmitting(prev => ({ ...prev, [formKey]: true }));
+    setSubmitting(true);
 
     try {
       const appsScriptUrl = 'https://script.google.com/macros/s/AKfycbzj9zlZTEhdlmaMt78Qy3kpkz7aOfVKVBRuJkd3wv_UERNrIRCaepSULpNa7W1g-pw/exec';
@@ -188,10 +190,10 @@ const OriginalBillsFiledPage = () => {
         throw new Error(result.error || result.message || 'Form submission failed');
       }
 
-      setSubmittedRows(prev => new Set([...prev, `bills_${rowId}`]));
-      setEditingRows(prev => ({ ...prev, [formKey]: false }));
+      setSubmittedRows(prev => new Set([...prev, `bills_${editingRow}`]));
+      setEditingRow(null);
       
-      alert(`SUCCESS: Form submitted successfully for Lift Number: ${row.liftNumber}\nActual Date: ${actualDateTime}\nDelay: ${delayDays} days`);
+      alert(`✅ SUCCESS: Form submitted successfully for Lift Number: ${row.liftNumber}\nActual Date: ${actualDateTime}\nDelay: ${delayDays} days`);
       
       setTimeout(() => {
         fetchData();
@@ -199,9 +201,9 @@ const OriginalBillsFiledPage = () => {
       
     } catch (error) {
       console.error('Submission error:', error);
-      alert(`SUBMISSION FAILED: ${error.message}`);
+      alert(`❌ SUBMISSION FAILED: ${error.message}`);
     } finally {
-      setSubmitting(prev => ({ ...prev, [formKey]: false }));
+      setSubmitting(false);
     }
   };
 
@@ -244,6 +246,12 @@ const OriginalBillsFiledPage = () => {
           return null;
         }
         
+        // Check if column AU (index 46) has data (Actual column for original-bills)
+        const actualValue = getCellValue(row, 46);
+        if (actualValue && actualValue !== '') {
+          return null; // Skip rows where Actual column is not empty
+        }
+        
         const rowData = {
           id: index,
           timestamp: formatDate(getCellValue(row, 0)) || '',
@@ -263,6 +271,7 @@ const OriginalBillsFiledPage = () => {
         return hasData ? rowData : null;
       }).filter(Boolean);
       
+      // Filter out submitted rows
       parsedData = parsedData.filter(item => {
         const submittedKey = `bills_${item.id}`;
         return !submittedRows.has(submittedKey);
@@ -282,82 +291,82 @@ const OriginalBillsFiledPage = () => {
     fetchData();
   }, []);
 
-  const renderEditableForm = (row) => {
-    const formKey = `bills_${row.id}`;
-    const isEditing = editingRows[formKey];
-    const isSubmitting = submitting[formKey];
-    const currentFormData = formData[formKey] || {};
-
-    if (!isEditing) {
-      return (
-        <button
-          onClick={() => {
-            setEditingRows(prev => ({ ...prev, [formKey]: true }));
-            initializeFormData(row.id);
-          }}
-          className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-rose-500 to-rose-600 text-white font-medium rounded-lg hover:from-rose-600 hover:to-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 transition-all duration-200 shadow-sm hover:shadow-md"
-        >
-          <Edit2 className="w-4 h-4 mr-2" />
-          Add Entry
-        </button>
-      );
-    }
+  const renderModal = () => {
+    if (!editingRow) return null;
+    
+    const row = accountsData.find(r => r.id === editingRow);
+    if (!row) return null;
 
     return (
-      <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-lg font-semibold text-gray-900">Filing Entry Form</h4>
-            <div className="text-sm text-gray-500">
-              Lift: {row.liftNumber}
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
-              <select
-                value={currentFormData.status || 'Not Done'}
-                onChange={(e) => handleFormChange(row.id, 'status', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 bg-white text-sm"
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold text-gray-900">Add Filing Entry</h3>
+              <button
+                onClick={() => setEditingRow(null)}
+                className="text-gray-400 hover:text-gray-600"
               >
-                <option value="Done">Done</option>
-                <option value="Not Done">Not Done</option>
-              </select>
+                <X className="w-6 h-6" />
+              </button>
             </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Remarks</label>
-              <textarea
-                value={currentFormData.remarks || ''}
-                onChange={(e) => handleFormChange(row.id, 'remarks', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 text-sm resize-none"
-                placeholder="Enter your remarks..."
-                rows={3}
-              />
+            <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+              <h4 className="font-medium text-gray-700 mb-2">Lift Details</h4>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div><span className="text-gray-600">Lift Number:</span> {row.liftNumber}</div>
+                <div><span className="text-gray-600">Timestamp:</span> {row.timestamp}</div>
+                <div><span className="text-gray-600">Party:</span> {row.partyName}</div>
+                <div><span className="text-gray-600">Product:</span> {row.productName}</div>
+              </div>
             </div>
-          </div>
-          
-          <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
-            <button
-              onClick={() => setEditingRows(prev => ({ ...prev, [formKey]: false }))}
-              disabled={isSubmitting}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50 transition-colors duration-200"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => submitFormData(row.id)}
-              disabled={isSubmitting}
-              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
-            >
-              {isSubmitting ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="w-4 h-4 mr-2" />
-              )}
-              {isSubmitting ? 'Submitting...' : 'Submit Entry'}
-            </button>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                <select
+                  value={formData.status || 'Not Done'}
+                  onChange={(e) => handleFormChange('status', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-sm"
+                >
+                  <option value="Done">Done</option>
+                  <option value="Not Done">Not Done</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Remarks</label>
+                <textarea
+                  value={formData.remarks || ''}
+                  onChange={(e) => handleFormChange('remarks', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm resize-none"
+                  placeholder="Enter your remarks..."
+                  rows={4}
+                />
+              </div>
+            </div>
+            
+            <div className="flex justify-end space-x-3 pt-6 mt-6 border-t border-gray-200">
+              <button
+                onClick={() => setEditingRow(null)}
+                disabled={submitting}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitFormData}
+                disabled={submitting}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+              >
+                {submitting ? (
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4 mr-2" />
+                )}
+                {submitting ? 'Submitting...' : 'Submit Entry'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -368,7 +377,7 @@ const OriginalBillsFiledPage = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
         <div className="text-center">
-          <RefreshCw className="w-12 h-12 animate-spin text-rose-500 mx-auto mb-4" />
+          <RefreshCw className="w-12 h-12 animate-spin text-blue-500 mx-auto mb-4" />
           <p className="text-xl text-gray-600">Loading filing data...</p>
         </div>
       </div>
@@ -398,6 +407,8 @@ const OriginalBillsFiledPage = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 sm:p-6">
+      {renderModal()}
+      
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
@@ -462,7 +473,16 @@ const OriginalBillsFiledPage = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.qty || '-'}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.transporterName || '-'}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {renderEditableForm(row)}
+                        <button
+                          onClick={() => {
+                            setEditingRow(row.id);
+                            initializeFormData(row.id);
+                          }}
+                          className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium rounded-lg hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 shadow-sm hover:shadow-md"
+                        >
+                          <Edit2 className="w-4 h-4 mr-2" />
+                          Add Entry
+                        </button>
                       </td>
                     </tr>
                   ))

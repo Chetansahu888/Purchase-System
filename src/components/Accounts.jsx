@@ -49,45 +49,52 @@ const Accounts = () => {
     setVisibleColumns(initialVisibleColumns);
   }, []);
 
-  // Updated date format function - matching Column A format DD/MM/YYYY HH:MM:SS
-  const formatDate = (dateString) => {
-    if (!dateString || dateString === '') return '-';
+  // Updated date format function to match the second code example
+ // Updated date format function to handle Date(year,month,day,hour,minute,second) format
+const formatDate = (dateString) => {
+  if (!dateString || dateString === '') return '-';
+  
+  try {
+    let date;
     
-    try {
-      let date;
-      
-      // Handle Excel serial number format from Google Sheets
-      if (!isNaN(dateString) && parseFloat(dateString) > 30000) {
-        const serialNumber = parseFloat(dateString);
-        date = new Date((serialNumber - 25569) * 86400 * 1000);
-      }
-      // Handle regular date formats
-      else if (dateString.includes('/') || dateString.includes('-')) {
-        date = new Date(dateString);
-      }
-      else {
-        date = new Date(dateString);
-      }
-      
-      if (isNaN(date.getTime())) {
-        return dateString;
-      }
-      
-      const day = date.getDate().toString().padStart(2, '0');
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      const year = date.getFullYear();
-      const hours = date.getHours().toString().padStart(2, '0');
-      const minutes = date.getMinutes().toString().padStart(2, '0');
-      const seconds = date.getSeconds().toString().padStart(2, '0');
-      
-      // Format matching Column A: DD/MM/YYYY HH:MM:SS
-      return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
-      
-    } catch (error) {
-      console.error('Date formatting error:', error);
+    // Handle Google Sheets Date(YYYY,MM,DD,HH,MM,SS) format
+    const dateMatch = dateString.match(/^Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?\)$/);
+    if (dateMatch) {
+      const [, year, month, day, hours, minutes, seconds] = dateMatch.map(Number);
+      date = new Date(year, month - 1, day, hours || 0, minutes || 0, seconds || 0);
+    }
+    // Handle Excel serial number format from Google Sheets
+    else if (!isNaN(dateString) && parseFloat(dateString) > 30000) {
+      const serialNumber = parseFloat(dateString);
+      date = new Date((serialNumber - 25569) * 86400 * 1000);
+    }
+    // Handle regular date formats
+    else if (dateString.includes('/') || dateString.includes('-')) {
+      date = new Date(dateString);
+    }
+    else {
+      date = new Date(dateString);
+    }
+    
+    if (isNaN(date.getTime())) {
       return dateString;
     }
-  };
+    
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+    
+    // Format matching the second code: DD/MM/YYYY HH:MM:SS
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+    
+  } catch (error) {
+    console.error('Date formatting error:', error);
+    return dateString;
+  }
+};
 
   const getCellValue = (row, colIndex) => {
     const cell = row.c?.[colIndex];
